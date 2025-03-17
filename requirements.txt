@@ -1,0 +1,8 @@
+pyspark
+pandas
+SQLAlchemy==1.4.17
+mysql-connector-python-rf==2.2.2
+dotenv
+alive-progress
+openpyxl
+xlrd>=2.0.1
