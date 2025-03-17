@@ -4,6 +4,7 @@ import os
 from dotenv import load_dotenv
 from utils import MySQLUtils
 import numpy as np
+from multiprocessing import Process, current_process, Queue
 
 # Connect to database
 load_dotenv()
@@ -22,11 +23,11 @@ mysql_conn.connect_to_mysql()
 tax_report_cols = ['CoCode', 'FIDocNo', 'CustomerNo', 'PostingDate', 'TxRptgDate', 'DocDate', 'DocType', 'InvoiceNo', 
                    'TaxCode', 'TaxRate', 'GLAccount', 'Currency', 'DocNetValue', 'TaxDocValue', 'ExchRate', 'NetLC', 
                    'LCTax', 'LocalCurrency', 'CustomerID', 'CustomerName', 'Plant', 'ShipFrom', 'ShipTo', 'CountrySR', 
-                   'ServiceRend', 'DeliveryNote', 'CustomerTaxClassification', 'FIDocNo']
+                   'ServiceRend', 'DeliveryNote', 'CustomerTaxClassification', 'MaterialTaxClassification']
 text_columns = [
     "CoCode", "FIDocNo", "CustomerNo", "DocType", "InvoiceNo", "TaxCode", 
     "GLAccount", "Currency", "LocalCurrency", "Plant", "ShipFrom", "ShipTo", 
-    "CountrySR", "ServiceRend", "DeliveryNote", "CustomerTaxClassification"
+    "CountrySR", "ServiceRend", "DeliveryNote", "CustomerTaxClassification", "MaterialTaxClassification"
 ]
 decimal_columns = ["DocNetValue", "TaxDocValue", "NetLC", "LCTax"]
 
@@ -40,6 +41,7 @@ tax_report_pd[decimal_columns].astype(float)
 # data processing
 # step 1: remove the '/' at currency rate column, remove "'" in customerName column
 tax_report_pd["TaxRate"] = tax_report_pd["TaxRate"].apply(lambda x: str(x).strip().replace('/', ''))
+tax_report_pd["ExchRate"] = tax_report_pd["ExchRate"].apply(lambda x: str(x).strip().replace('/', ''))
 tax_report_pd["CustomerName"] = tax_report_pd["CustomerName"].apply(lambda x: str(x).strip().replace("'", '-'))
 tax_report_pd["CustomerID"] = tax_report_pd["CustomerID"].apply(lambda x: str(x).strip().replace(".0", ''))
 
@@ -55,12 +57,38 @@ tax_report_pd = tax_report_pd.replace(['nan', np.nan], "null")
 customer_code = tax_report_pd[['CustomerID', 'CustomerName']]
 customer_code_unique = customer_code.drop_duplicates(subset=['CustomerID'])
 
+# drop the unused cols from main table
+tax_report_pd = tax_report_pd.drop(columns=["CustomerName"])
+
 #%% Tax Report data upload
-customer_code_db_info = ('Customer', ['CustomerID'])
-tax_report_db_info = ('TaxReporting', ['FIDocNo', 'DocNetValue'])
+def upload_date(mysql_conn, df, *target_table_info):
+    result = mysql_conn.insert_dataframe_to_sql(df, *target_table_info)
+    return result
 
-customer_code_table_result = mysql_conn.insert_dataframe_to_sql(customer_code_unique, *customer_code_db_info)
-print(customer_code_table_result)
+def worker_process(q):
+    process_name = current_process().name
+    print(f"{process_name} started")
 
-# tax_reporting_table_result = mysql_conn.insert_dataframe_to_sql(tax_report_pd, *tax_report_db_info)
-# print(tax_reporting_table_result)
+    customer_code_db_info = ('Customer', ['CustomerID'])
+    tax_report_db_info = ('TaxReporting', ['FIDocNo', 'DocNetValue'])
+    # upload_date(mysql_conn, customer_code_unique, *customer_code_db_info)
+    upload_date(mysql_conn, tax_report_pd, *tax_report_db_info)
+    q.put(f"{process_name} finished")
+
+def main():
+    q = Queue()
+    processes = []
+
+    for _ in range(4):  # create 4 processes
+        p = Process(target=worker_process, args=(q,))
+        processes.append(p)
+        p.start()
+
+    for p in processes:
+        p.join()
+
+    while not q.empty():
+        print(q.get())
+
+if __name__ == "__main__":
+    main()
