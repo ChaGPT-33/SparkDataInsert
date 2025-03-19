@@ -172,3 +172,12 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+/dependencies
+/asset/DMOP/*
+/asset/TaxReport/*
+/logs/*
+/dependencies.zip
+/*.xlsx
+/*.xls
+/test.py
